@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>CEE Scheduling Conflict Prototype</title>
+    <p style="font-size: 12px;">
+    Backend URL: <code>http://127.0.0.1:8000</code>.
+    Ensure <code>uvicorn app:app --reload</code> is running.
+    </p>
+
+    <div style="margin-bottom: 10px;">
+    <label for="termSelect" style="font-size: 13px; font-weight: bold;">Quarter:</label>
+    <select id="termSelect" style="margin-left: 5px; padding: 2px 4px;">
+        <option value="2026FA">2026FA (Fall 2026)</option>
+        <option value="2027WI">2027WI (Winter 2027)</option>
+        <option value="2027SP">2027SP (Spring 2027)</option>
+    </select>
+    </div>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    h1 { font-size: 20px; }
+    h2 { font-size: 16px; margin-bottom: 8px; }
+    h3 { font-size: 14px; margin-top: 16px; margin-bottom: 4px; }
+    .top-container {
+        display: flex;
+        gap: 20px;
+        align-items: flex-start;
+    }
+    .panel {
+    border: 1px solid #ccc;
+    padding: 10px;
+    box-sizing: border-box;
+    }
+    #panel-left {
+    width: 30%;
+    }
+    #panel-right {
+    width: 70%;
+    }
+        .bottom-panel {
+    border: 1px solid #ccc;
+    padding: 10px;
+    margin-top: 15px;
+    box-sizing: border-box;
+    }
+    select, button { margin: 5px 0; width: 100%; }
+    button { padding: 6px 10px; cursor: pointer; }
+    .schedule-row { display: flex; gap: 5px; margin-bottom: 4px; align-items: center; }
+    .schedule-row span { flex: 1; font-size: 12px; }
+    .schedule-row button { flex: 0; font-size: 11px; }
+    .metrics { font-size: 13px; line-height: 1.4; }
+    .metrics strong { font-weight: 600; }
+    table { border-collapse: collapse; width: 100%; font-size: 12px; margin-top: 6px; }
+    th, td { border: 1px solid #ddd; padding: 4px 6px; text-align: left; }
+    th { background-color: #f2f2f2; }
+    details { margin-top: 10px; }
+    pre { background: #f7f7f7; padding: 8px; max-height: 250px; overflow: auto; }
+    .badge { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 11px; }
+    .badge-ok { background-color: #e6f4ea; color: #256029; }
+    .badge-warn { background-color: #fff4e5; color: #8a4b08; }
+    .grid-table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 11px;
+    }
+    .grid-table th, .grid-table td {
+        border: 1px solid #ddd;
+        padding: 4px;
+        text-align: center;
+        vertical-align: top;
+    }
+    .grid-table th {
+        background-color: #f2f2f2;
+    }
+    .slot-cell {
+        min-width: 80px;
+        min-height: 40px;
+    }
+    .slot-active {
+        background-color: #f9f9ff;
+    }
+    .slot-active.drag-over {
+        outline: 2px dashed #007acc;
+    }
+    .course-tile {
+        border: 1px solid #999;
+        border-radius: 3px;
+        padding: 2px 4px;
+        margin: 2px 0;
+        font-size: 11px;
+        background-color: #eef5ff;
+        cursor: grab;
+    }
+    .slot-low {
+    background-color: #e8f5e9;  /* light green */
+    }
+    .slot-med {
+    background-color: #fff8e1;  /* light yellow */
+    }
+    .slot-high {
+    background-color: #ffebee;  /* light red/pink */
+    }
+    .tile-conflict {
+    border-color: #c62828;
+    background-color: #ffebee;
+    }
+  </style>
+</head>
+<body>
+  <h1>CEE Scheduling Conflict Prototype</h1>
+  <p style="font-size: 12px;">
+    Backend URL: <code>http://127.0.0.1:8000</code>.
+    Ensure <code>uvicorn app:app --reload</code> is running.
+  </p>
+
+  <!-- Top: tiles (left) + grid (right) -->
+  <div class="top-container">
+    <div class="panel" id="panel-left">
+      <h2>Unscheduled Courses</h2>
+      <div id="unscheduledCourses"
+           style="border: 1px solid #ccc; padding: 4px; min-height: 200px; max-height: 400px; overflow-y: auto;"></div>
+    </div>
+
+    <div class="panel" id="panel-right">
+      <h2 id="gridTitle">Time Slot Grid (2026FA)</h2>
+      <div id="gridContainer" style="overflow-x: auto;"></div>
+      <button id="computeConflictsBtn" style="margin-top: 10px;">Compute Conflicts</button>
+    </div>
+  </div>
+
+  <!-- Bottom: messages / metrics -->
+  <div class="bottom-panel">
+    <h2>Conflict Summary</h2>
+    <div id="summaryBox" class="metrics">
+      Drag courses into the grid and click “Compute Conflicts”.
+    </div>
+
+    <details>
+      <summary style="cursor: pointer; font-size: 12px;">Show raw JSON results (debugging)</summary>
+      <pre id="resultsBox">{}</pre>
+    </details>
+    <div style="margin-top: 10px;">
+    <button id="saveScheduleBtn" style="margin-right: 5px;">Save Schedule</button>
+    <button id="loadScheduleBtn">Load Schedule</button>
+    </div>
+
+    <div style="margin-top: 6px;">
+    <label for="scheduleJson" style="font-size: 12px;">Schedule JSON:</label>
+    <textarea id="scheduleJson"
+                style="width: 100%; height: 80px; font-size: 11px; font-family: monospace;"></textarea>
+    </div>
+  </div>
+
+  <!-- keep your existing <script> here -->
+  <script>
+    const API_BASE = "";
+
+    const saveScheduleBtn = document.getElementById("saveScheduleBtn");
+    const loadScheduleBtn = document.getElementById("loadScheduleBtn");
+    const scheduleJson = document.getElementById("scheduleJson");
+    const termSelect = document.getElementById("termSelect");
+    let currentTerm = termSelect.value;
+    termSelect.addEventListener("change", async () => {
+    currentTerm = termSelect.value;
+    gridTitle.textContent = `Time Slot Grid (${currentTerm})`;
+    // Clear schedule when changing term
+    schedule = [];
+    summaryBox.textContent = `Term changed to ${currentTerm}. Drag courses into the grid and click “Compute Conflicts”.`;
+    resultsBox.textContent = "{}";
+    await loadCourses();      // reload courses for this term
+    renderGridAssignments();  // clears tiles from grid
+    });
+    const gridTitle = document.getElementById("gridTitle");
+    const unscheduledDiv = document.getElementById("unscheduledCourses");
+    const gridContainer = document.getElementById("gridContainer");
+    const computeConflictsBtn = document.getElementById("computeConflictsBtn");
+    const resultsBox = document.getElementById("resultsBox");
+    const summaryBox = document.getElementById("summaryBox");
+
+    let schedule = [];   // [{ course_code, day_pattern, start_time, end_time, term }]
+    let timeslots = [];  // from /timeslots
+    let courses = [];    // from /courses
+    let rowsByTimeBand = {}; // computed grouping
+    let timeBandKeys = [];
+    const patterns = ["MW", "WF", "MF", "TR"];
+    let conflictScoresByCourse = {};
+
+    async function loadTimeslots() {
+    const res = await fetch(API_BASE + "/timeslots");
+    timeslots = await res.json();
+
+    rowsByTimeBand = {};
+    timeslots.forEach(slot => {
+        const key = `${slot.start_time}-${slot.end_time}`;
+        if (!rowsByTimeBand[key]) {
+        rowsByTimeBand[key] = {
+            start_time: slot.start_time,
+            end_time: slot.end_time,
+            slotsByPattern: {}
+        };
+        }
+        rowsByTimeBand[key].slotsByPattern[slot.day_pattern] = slot;
+    });
+
+    saveScheduleBtn.onclick = () => {
+    if (schedule.length === 0) {
+        scheduleJson.value = "";
+        summaryBox.textContent = "Schedule is empty; nothing to save.";
+        return;
+    }
+    const data = {
+        term: currentTerm,
+        schedule: schedule
+    };
+    scheduleJson.value = JSON.stringify(data, null, 2);
+    summaryBox.textContent = "Schedule saved into the text box below. Copy/paste it to keep a scenario.";
+    };
+
+    loadScheduleBtn.onclick = () => {
+    if (!scheduleJson.value.trim()) {
+        summaryBox.textContent = "No JSON to load. Paste a saved schedule first.";
+        return;
+    }
+    try {
+        const data = JSON.parse(scheduleJson.value);
+        if (!data.schedule || !Array.isArray(data.schedule)) {
+        throw new Error("Invalid format: expected an object with a 'schedule' array.");
+        }
+        // If term is present in JSON, switch term if needed
+        if (data.term && data.term !== currentTerm) {
+        currentTerm = data.term;
+        termSelect.value = currentTerm;
+        gridTitle.textContent = `Time Slot Grid (${currentTerm})`;
+        }
+
+        // Replace schedule
+        schedule = data.schedule.filter(item => item.term === currentTerm);
+
+        // Re-render everything
+        renderUnscheduledCourses();
+        renderGridAssignments();
+        summaryBox.textContent = `Loaded schedule for term ${currentTerm}.`;
+    } catch (e) {
+        summaryBox.textContent = "Error loading schedule: " + e.message;
+    }
+    };
+
+    timeBandKeys = Object.keys(rowsByTimeBand).sort((a, b) => {
+        const [aStart] = a.split("-");
+        const [bStart] = b.split("-");
+        return aStart.localeCompare(bStart);
+    });
+    }
+
+    async function loadCourses() {
+    const res = await fetch(`${API_BASE}/courses?term=${currentTerm}`);
+    courses = await res.json();
+      if (courses.length === 0) {
+    unscheduledDiv.textContent = `No courses found for term ${currentTerm}.`;
+        } else {
+        renderUnscheduledCourses();
+        }
+    }
+
+
+    function renderUnscheduledCourses() {
+    unscheduledDiv.innerHTML = "";
+    if (courses.length === 0) {
+        unscheduledDiv.textContent = "No courses loaded.";
+        return;
+    }
+
+    courses.forEach(c => {
+        const isScheduled = schedule.some(s => s.course_code === c.course_code);
+        if (isScheduled) return;
+
+        const tile = document.createElement("div");
+        tile.className = "course-tile";
+        tile.draggable = true;
+        tile.textContent = c.course_code;
+        tile.dataset.courseCode = c.course_code;
+
+        // Highlight if high conflict
+        const score = conflictScoresByCourse[c.course_code] || 0;
+        if (score > 0) {
+        tile.classList.add("tile-conflict");
+        }
+
+        tile.addEventListener("dragstart", ev => {
+        ev.dataTransfer.setData("text/plain", c.course_code);
+        });
+        // Right-click to remove from schedule
+        tile.addEventListener("contextmenu", ev => {
+        ev.preventDefault();
+        const code = sched.course_code;
+        schedule = schedule.filter(s => s.course_code !== code);
+        renderGridAssignments();
+        renderUnscheduledCourses();
+        summaryBox.textContent = `Removed ${code} from schedule.`;
+        });
+
+        unscheduledDiv.appendChild(tile);
+    });
+    }
+
+    function buildGrid() {
+    const table = document.createElement("table");
+    table.className = "grid-table";
+
+    // Header
+    const thead = document.createElement("thead");
+    const headerRow = document.createElement("tr");
+    const timeTh = document.createElement("th");
+    timeTh.textContent = "Time";
+    headerRow.appendChild(timeTh);
+    patterns.forEach(p => {
+        const th = document.createElement("th");
+        th.textContent = p;
+        headerRow.appendChild(th);
+    });
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+
+    // Body
+    const tbody = document.createElement("tbody");
+
+    timeBandKeys.forEach(key => {
+        const rowInfo = rowsByTimeBand[key];
+        const tr = document.createElement("tr");
+
+        const timeTd = document.createElement("td");
+        timeTd.textContent = `${rowInfo.start_time}-${rowInfo.end_time}`;
+        tr.appendChild(timeTd);
+
+        patterns.forEach(pattern => {
+        const td = document.createElement("td");
+        td.className = "slot-cell";
+
+        const slot = rowInfo.slotsByPattern[pattern];
+        if (slot) {
+            td.classList.add("slot-active");
+            td.dataset.pattern = pattern;
+            td.dataset.start = slot.start_time;
+            td.dataset.end = slot.end_time;
+
+            // Drag-over / drop handlers
+            td.addEventListener("dragover", (ev) => {
+            ev.preventDefault();
+            td.classList.add("drag-over");
+            });
+            td.addEventListener("dragleave", () => {
+            td.classList.remove("drag-over");
+            });
+            td.addEventListener("drop", (ev) => {
+            ev.preventDefault();
+            td.classList.remove("drag-over");
+            const courseCode = ev.dataTransfer.getData("text/plain");
+            if (!courseCode) return;
+
+            const entry = {
+            course_code: courseCode,
+            day_pattern: pattern,
+            start_time: slot.start_time,
+            end_time: slot.end_time,
+            term: currentTerm
+            };
+
+            // Replace any existing assignment for this course
+            const idx = schedule.findIndex(s => s.course_code === courseCode);
+            if (idx >= 0) {
+                schedule[idx] = entry;
+            } else {
+                schedule.push(entry);
+            }
+
+            renderGridAssignments();
+            renderUnscheduledCourses();
+            summaryBox.textContent = "Schedule updated. Click “Compute Conflicts” to see metrics.";
+            });
+        }
+
+        tr.appendChild(td);
+        });
+
+        tbody.appendChild(tr);
+    });
+
+    table.appendChild(tbody);
+    gridContainer.innerHTML = "";
+    gridContainer.appendChild(table);
+    }
+
+    function renderGridAssignments() {
+    buildGrid();
+
+    const slotLoads = computeSlotLoads(schedule);
+    const table = gridContainer.querySelector("table");
+    if (!table) return;
+
+    const rows = table.querySelectorAll("tbody tr");
+    rows.forEach(row => {
+        const timeText = row.children[0].textContent; // "start-end"
+        const [start, end] = timeText.split("-");
+        patterns.forEach((pattern, idx) => {
+        const cell = row.children[idx + 1];
+        if (!cell.classList.contains("slot-active")) return;
+
+        const slotKey = `${pattern} ${start}-${end}`;
+        const load = slotLoads[slotKey] || 0;
+
+        // Clear old tiles
+        cell.innerHTML = "";
+
+        // Add tiles for this slot
+        const matchingCourses = schedule.filter(
+            s =>
+            s.day_pattern === pattern &&
+            s.start_time === start &&
+            s.end_time === end
+        );
+        matchingCourses.forEach(sched => {
+        const tile = document.createElement("div");
+        tile.className = "course-tile";
+        tile.draggable = true;
+        tile.textContent = sched.course_code;
+        tile.dataset.courseCode = sched.course_code;
+
+        tile.addEventListener("dragstart", ev => {
+            ev.dataTransfer.setData("text/plain", sched.course_code);
+        });
+
+        // Right-click to remove this course from the schedule
+        tile.addEventListener("contextmenu", ev => {
+            ev.preventDefault();
+            const code = sched.course_code;
+            schedule = schedule.filter(s => s.course_code !== code);
+            renderGridAssignments();
+            renderUnscheduledCourses();
+            summaryBox.textContent = `Removed ${code} from schedule.`;
+        });
+
+            cell.appendChild(tile);
+        });
+
+        // Apply load-based styling
+        cell.classList.remove("slot-low", "slot-med", "slot-high");
+        if (load >= 3) {
+            cell.classList.add("slot-high");
+        } else if (load === 2) {
+            cell.classList.add("slot-med");
+        } else if (load === 1) {
+            cell.classList.add("slot-low");
+        }
+        });
+    });
+    }
+
+    function renderSummary(data) {
+      const m = data.metrics;
+      const totalStudents = data.total_students || 0;
+      const totalCourses = data.courses_in_schedule || 0;
+      const expected = m.expected_conflicts_all || 0;
+      const studentsWith = m.students_with_conflict || 0;
+      const rate = m.conflict_rate_overall || 0;
+
+      const badgeClass = rate > 20 ? "badge-warn" : "badge-ok";
+      const badgeText = rate > 20 ? "High conflict" : "Manageable";
+
+      let html = "";
+      // Compute slot loads (how many courses per time slot)
+        const slotLoads = computeSlotLoads(schedule);
+        const slotLoadEntries = Object.entries(slotLoads)
+        .sort((a, b) => b[1] - a[1])   // sort by count descending
+        .slice(0, 5);                  // top 5 busiest slots
+
+      html += `<div><strong>Term:</strong> ${(data.term || [])[0] || "N/A"}</div>`;
+      html += `<div><strong>Courses in schedule:</strong> ${totalCourses}</div>`;
+      html += `<div><strong>Total students modeled:</strong> ${totalStudents}</div>`;
+      html += `<div style="margin-top:8px;"><span class="badge ${badgeClass}">${badgeText}</span></div>`;
+      html += `<div style="margin-top:8px;"><strong>Overall:</strong></div>`;
+      html += `<ul style="margin-top:4px; padding-left:18px; font-size: 13px;">`;
+      html += `<li>Expected conflicts (weighted): <strong>${expected}</strong></li>`;
+      html += `<li>Students with ≥1 conflict: <strong>${studentsWith}</strong> (${rate}%)</li>`;
+      html += `</ul>`;
+ 
+      if (slotLoadEntries.length > 0) {
+        html += `<div style="margin-top:6px;"><strong>Busiest time slots (by number of courses):</strong></div>`;
+        html += `<ul style="margin-top:4px; padding-left:18px; font-size: 12px;">`;
+        slotLoadEntries.forEach(([slotKey, count]) => {
+            html += `<li>${slotKey}: <strong>${count}</strong> course${count > 1 ? "s" : ""}</li>`;
+        });
+        html += `</ul>`;
+      }
+
+      if (m.by_path_type && m.by_path_type.length > 0) {
+        html += `<div style="margin-top:6px;"><strong>By path/area:</strong></div>`;
+        html += `<table><thead><tr><th>Path</th><th>Students with conflict</th><th>Total students</th><th>%</th><th>Weighted conflicts</th></tr></thead><tbody>`;
+        m.by_path_type.forEach(p => {
+          html += `<tr>
+            <td>${p.path_type}</td>
+            <td>${p.students_with_conflict}</td>
+            <td>${p.total_students_in_path}</td>
+            <td>${p.conflict_rate}%</td>
+            <td>${p.expected_conflicts}</td>
+          </tr>`;
+        });
+        html += `</tbody></table>`;
+      }
+
+      if (m.top_conflicting_pairs && m.top_conflicting_pairs.length > 0) {
+        const top = m.top_conflicting_pairs.slice(0, 5);
+        html += `<div style="margin-top:8px;"><strong>Top conflicting pairs:</strong></div>`;
+        html += `<ul style="margin-top:4px; padding-left:18px; font-size: 12px;">`;
+        top.forEach(pair => {
+          html += `<li>${pair.course_a} × ${pair.course_b}: ${pair.expected_conflicts} weighted conflicts</li>`;
+        });
+        html += `</ul>`;
+      }
+
+      summaryBox.innerHTML = html;
+    }
+
+    function getSlotKey(item) {
+    return `${item.day_pattern} ${item.start_time}-${item.end_time}`;
+    }
+
+    function computeSlotLoads(schedule) {
+    const loads = {};
+    schedule.forEach(item => {
+        const key = getSlotKey(item);
+        if (!loads[key]) loads[key] = 0;
+        loads[key] += 1;
+    });
+    return loads;
+    }
+
+    computeConflictsBtn.onclick = async () => {
+    if (schedule.length === 0) {
+        summaryBox.textContent = "Schedule is empty. Add at least one course.";
+        resultsBox.textContent = "{}";
+        return;
+    }
+    summaryBox.textContent = "Computing conflicts…";
+    try {
+        const res = await fetch(API_BASE + "/conflicts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(schedule)
+        });
+        const data = await res.json();
+        resultsBox.textContent = JSON.stringify(data, null, 2);
+
+        // Build conflict score map
+        conflictScoresByCourse = {};
+        const topCourses = data.metrics.top_conflicting_courses || [];
+        topCourses.forEach(c => {
+        conflictScoresByCourse[c.course_code] = c.conflict_score;
+        });
+        renderSummary(data);
+        renderUnscheduledCourses();
+        renderGridAssignments();
+    } catch (e) {
+        summaryBox.textContent = "Error computing conflicts: " + e;
+    }
+    };
+
+    (async function init() {
+    try {
+        currentTerm = termSelect.value;
+        gridTitle.textContent = `Time Slot Grid (${currentTerm})`;
+        await loadTimeslots();
+        await loadCourses();
+        buildGrid();
+        renderGridAssignments();
+    } catch (e) {
+        summaryBox.textContent = "Error connecting to backend: " + e;
+    }
+    })();
+  </script>
+</body>
+</html>
